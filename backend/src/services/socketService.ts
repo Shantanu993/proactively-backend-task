@@ -20,13 +20,12 @@ interface ResponseFieldPayload {
   value: string;
   response_id: string;
 }
-
-// Helper function to clean up expired locks
 const cleanupExpiredLocks = async (io: Server) => {
   try {
+    // Get expired locks first
     const { data: expiredLocks, error: selectError } = await supabase
       .from("field_locks")
-      .select("field_id, form_id, forms(share_code)")
+      .select("field_id, sharing_code_id")
       .lt("expires_at", new Date().toISOString());
 
     if (selectError) {
@@ -35,14 +34,36 @@ const cleanupExpiredLocks = async (io: Server) => {
     }
 
     if (expiredLocks && expiredLocks.length > 0) {
-      // Notify about unlocked fields
-      expiredLocks.forEach((lock: any) => {
-        if (lock.forms?.share_code) {
-          io.to(lock.forms.share_code).emit("field-unlocked", {
-            fieldId: lock.field_id,
-          });
-        }
-      });
+      console.log(`Found ${expiredLocks.length} expired locks to clean up`);
+
+      // Get sharing codes for these locks
+      const sharingCodeIds = [
+        ...new Set(expiredLocks.map((lock) => lock.sharing_code_id)),
+      ];
+
+      const { data: sharingCodes, error: sharingError } = await supabase
+        .from("form_sharing_codes")
+        .select("id, share_code")
+        .in("id", sharingCodeIds);
+
+      if (!sharingError && sharingCodes) {
+        const sharingCodeMap = new Map(
+          sharingCodes.map((sc) => [sc.id, sc.share_code])
+        );
+
+        // Notify about unlocked fields
+        expiredLocks.forEach((lock: any) => {
+          const shareCode = sharingCodeMap.get(lock.sharing_code_id);
+          if (shareCode) {
+            io.to(shareCode).emit("field-unlocked", {
+              fieldId: lock.field_id,
+            });
+            console.log(
+              `Notified room ${shareCode} about unlocked field ${lock.field_id}`
+            );
+          }
+        });
+      }
 
       // Delete expired locks
       const { error: deleteError } = await supabase
@@ -53,14 +74,13 @@ const cleanupExpiredLocks = async (io: Server) => {
       if (deleteError) {
         console.error("Error deleting expired locks:", deleteError);
       } else {
-        console.log(`Cleaned up ${expiredLocks.length} expired locks`);
+        console.log(`✅ Cleaned up ${expiredLocks.length} expired locks`);
       }
     }
   } catch (error) {
     console.error("Failed to clean up expired locks:", error);
   }
 };
-
 // Helper function to validate field value based on field type
 const validateFieldValue = (fieldType: string, value: string): boolean => {
   if (!value || value.trim() === "") return true; // Empty values are allowed
