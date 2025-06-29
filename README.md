@@ -1,4 +1,4 @@
-# Proactive Collaborative Forms
+# Real-time Collaborative Forms
 
 A real-time collaborative form filling system that allows multiple users to work together on structured forms simultaneously, similar to Google Docs but for forms.
 
